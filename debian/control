@@ -1,0 +1,20 @@
+Source: lago
+Section: utils
+Maintainer: Ken Gilmer <kgilmer@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               cargo,
+               rustc,
+               meson,
+               ninja-build,
+               python3
+Standards-Version: 4.7.2
+Homepage: https://github.com/regolith-linux/lago
+Vcs-Git: https://github.com/regolith-linux-fedora/lago-rs.git
+Vcs-Browser: https://github.com/regolith-linux-fedora/lago-rs
+
+Package: lago
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: command-line client for the Rofication notification daemon
+ Lists and dismisses desktop notifications held by rofication-daemon
+ (regolith-rofication) from the terminal.

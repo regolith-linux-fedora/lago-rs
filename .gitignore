@@ -1,0 +1,13 @@
+# Rust and meson
+/rust/target/
+/build/
+/obj-*/
+
+# Debian build output
+debian/files
+debian/*.substvars
+debian/*.debhelper
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+debian/lago/
+debian/.debhelper/

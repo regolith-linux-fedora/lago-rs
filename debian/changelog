@@ -1,0 +1,33 @@
+lago (0.2.0-2) focal; urgency=medium
+
+  [ Khosrow Moossavi ]
+  * feat: use build-only to test pull request
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Mon, 13 Oct 2025 18:26:58 +0000
+
+lago (0.2.0-1) focal; urgency=medium
+
+  [ Ken Gilmer ]
+  * Add readme
+  * build automation
+  * Add usage to readme
+  * Add empty files to appease autovala generated build files
+  * More legible output from ls
+  * Refactor rofication client to be sessionless.
+  * Update valac dep for jammy
+
+  [ Khosrow Moossavi ]
+  * chore: remove obsolete package broadcast action
+  * feat: enable github action to test pull requests
+  * feat: enable github action to publish to unstable
+  * feat: enable github action to publish to testing
+  * feat: enable github action to prepare release
+  * fix: create release tag from correct git sha
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Mon, 03 Feb 2025 21:34:46 +0000
+
+lago (0.1.0-1) focal; urgency=medium
+
+  * Initial Release 
+
+ -- Regolith Linux <regolith.linux@gmail.com>  Tue, 05 Oct 2021 07:27:39 -0700
