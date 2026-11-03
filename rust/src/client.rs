@@ -120,8 +120,62 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use super::reason;
-    use std::io;
+    use super::{reason, Client};
+    use std::io::{self, Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Serves one `list` request on a fresh socket, writing `pieces` with a
+    /// pause between them, then closing; returns what the client read.
+    fn list_with_reply_in(name: &str, pieces: Vec<Vec<u8>>) -> Vec<(i64, Vec<u8>)> {
+        let dir = std::env::temp_dir().join(format!("lago-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("socket");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut request = [0u8; 5];
+            conn.read_exact(&mut request).unwrap();
+            assert_eq!(&request, b"list\n");
+            for piece in pieces {
+                conn.write_all(&piece).unwrap();
+                conn.flush().unwrap();
+                thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let client = Client::new(path.to_str().unwrap().as_bytes());
+        let listed = match client.get_notifications() {
+            Ok(list) => list
+                .into_iter()
+                .map(|n| (n.id, n.application.unwrap_or_default()))
+                .collect(),
+            Err(_) => panic!("the list reply was not read"),
+        };
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        listed
+    }
+
+    #[test]
+    fn reply_in_several_reads() {
+        let reply = br#"[{"id": 1, "application": "Chat", "urgency": 1}, {"id": 2, "application": "Mail", "urgency": 2}]"#;
+        let (first, second) = reply.split_at(30);
+        let listed = list_with_reply_in("split", vec![first.to_vec(), second.to_vec()]);
+        assert_eq!(listed, [(1, b"Chat".to_vec()), (2, b"Mail".to_vec())]);
+    }
+
+    #[test]
+    fn reply_larger_than_any_single_read() {
+        // About 1.5 MB, written in 64 KiB pieces.
+        let body = "x".repeat(1_500_000);
+        let reply =
+            format!(r#"[{{"id": 7, "application": "Big", "body": "{body}"}}]"#).into_bytes();
+        let pieces = reply.chunks(65536).map(<[u8]>::to_vec).collect();
+        let listed = list_with_reply_in("large", pieces);
+        assert_eq!(listed, [(7, b"Big".to_vec())]);
+    }
 
     #[test]
     fn os_error_suffix_is_dropped() {
