@@ -1,3 +1,16 @@
+lago (0.2.0+rust1) unstable; urgency=medium
+
+  * Rust port of lago, reproducing lago 3c9a70d (0.2.0-2 plus packaging
+    fixes) with the client fixes below. Same package name and payload
+    (/usr/bin/lago); builds with cargo instead of valac.
+  * Read the whole list reply, however many reads it takes, instead of one
+    receive into a fixed buffer.
+  * Report a missing daemon or a bad reply with a message and exit status 1
+    instead of aborting with a core dump.
+  * Accept -s anywhere on the command line; -s without a value is an error.
+
+ -- rego-port-bot <339843353+rego-port-bot@users.noreply.github.com>  Mon, 02 Nov 2026 19:24:01 -0800
+
 lago (0.2.0-2) focal; urgency=medium
 
   [ Khosrow Moossavi ]
