@@ -26,7 +26,7 @@ pub enum ClientError {
 }
 
 /// The system error text without Rust's ` (os error N)` suffix.
-fn reason(err: &io::Error) -> String {
+pub fn reason(err: &io::Error) -> String {
     let text = err.to_string();
     match text.rfind(" (os error ") {
         Some(idx) if text.ends_with(')') => text[..idx].to_string(),

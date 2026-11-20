@@ -53,6 +53,19 @@ Compared with lago `3c9a70d`, which aborts with a core dump in each of these cas
 - `clear` with 8 or more notifications deletes all of them. The original's non-blocking connect
   failed once the daemon's listen backlog was full.
 
+Output errors:
+
+- A reader that goes away (`lago ls | head -1`, `lago -h | true`) is not an error. lago stops
+  writing and exits with the status the command has anyway: 0 after a listing, the help or the
+  version, 1 when it printed the usage for a wrong command line. It prints no message and is never
+  ended by SIGPIPE. Under `set -o pipefail`, `lago ls | head -1` therefore succeeds. ripgrep and
+  bat do the same. The original is ended by SIGPIPE (status 141 in a shell) for its help and
+  version text. For `ls` it exits 0, because GLib's socket code has set SIGPIPE to ignored by then.
+- Any other failure to write stdout, such as a full disk, gives
+  `lago: cannot write to stdout: <reason>` and exit status 1. The original ignores it and exits 0.
+- A failure to write stderr can't be reported anywhere. lago keeps status 1 for the failure it was
+  trying to report.
+
 Packaging: Build-Depends are `cargo, rustc, meson, ninja-build, python3` instead of valac and the
 GLib/json-glib headers. The binary links only libc and libgcc.
 
@@ -70,7 +83,7 @@ meson drives the same build and runs the regression suite:
 ```
 meson setup build
 ninja -C build                # build/src/lago
-meson test -C build           # test/lago_regress.py: 147 cases against a fake daemon
+meson test -C build           # test/lago_regress.py: 174 cases against a fake daemon
 ```
 
 Debian package (runs the meson build and the suite):
@@ -84,9 +97,11 @@ newer).
 
 ## How it was verified
 
-- `cargo test`: 20 unit tests, including a list reply split across reads and a 1.5 MB reply.
-- The regression suite: 147 cases checking exit status, stdout, stderr and the exact request
-  bytes of every connection.
+- `cargo test`: 25 unit tests, including a list reply split across reads, a 1.5 MB reply, and
+  stdout and stderr writers that fail with EPIPE or ENOSPC.
+- The regression suite: 174 cases checking exit status, stdout, stderr and the exact request
+  bytes of every connection. 27 of them put stdout or stderr on a pipe with no reader, on a
+  reader that stops after 4 KiB, or on `/dev/full`.
 - A differential suite against a build of the original Vala lago with the fixes above (1078
   checks: 600 seeded command lines and replies, 434 recorded outputs, protocol, rendering and
   robustness cases, the real rofication daemon, packaging). Every behaviour check passes. The

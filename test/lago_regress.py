@@ -10,6 +10,12 @@ every connection, in order) with the expected values. Expected values are
 the behaviour of the released client; "{S}" stands for the per-case socket
 path in argv, stderr and requests.
 
+The broken-pipe cases run with stdout or stderr connected to a pipe whose
+reader is gone, a reader that stops early, or /dev/full. A reader that went
+away is not an error: lago stops writing, prints nothing about it and exits
+with the command's own status, never by a signal. Any other failure to write
+stdout is reported on stderr with status 1.
+
 The fake daemon reads one request per connection. A `list` request gets the
 scripted reply (whole, in chunks, or slowly) and the connection is closed;
 `del`/`dela` requests are read to EOF and never answered, like the real
@@ -18,6 +24,7 @@ daemon.
 
 import os
 import select
+import signal
 import socket
 import subprocess
 import sys
@@ -483,6 +490,128 @@ CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Broken pipes
+#
+# (name, argv, behaviors, stream, rc, other, requests)
+#   stream: "stdout" or "stderr", connected to a pipe whose read end is closed
+#     before lago starts; "stdout-4k": stdout is read for 4096 bytes and then
+#     closed while lago still has output to write; "stdout-full" and
+#     "stderr-full": /dev/full.
+#   rc: the expected exit status (a death by signal never matches).
+#   other: expected bytes on the other stream.
+
+LISTING = b"[" + b",".join(
+    note(i, b"x" * 200, b"body", b"app", 1) for i in range(3000)) + b"]"
+NO_SPACE = b"lago: cannot write to stdout: No space left on device\n"
+
+PIPE_CASES = [
+    # A reader that has gone away: lago stops writing, says nothing and
+    # keeps the command's exit status ...
+    ("pipe-version", ["-v"], [], "stdout", 0, b"", []),
+    ("pipe-help", ["-h"], [], "stdout", 0, b"", []),
+    ("pipe-no-args", [], [], "stdout", 0, b"", []),
+    ("pipe-unknown-command", ["foo", "-s", "{S}"], [], "stdout", 1, b"", []),
+    ("pipe-bare-rm", ["rm", "-s", "{S}"], [], "stdout", 0, b"", []),
+    ("pipe-ls", ["ls", "-s", "{S}"], [reply(FULL)], "stdout", 0, b"",
+     [b"list\n"]),
+    ("pipe-ls-reader-stops", ["ls", "-s", "{S}"], [reply(LISTING)],
+     "stdout-4k", 0, b"", [b"list\n"]),
+    ("pipe-s-no-value", ["ls", "-s"], [], "stderr", 1, b"", []),
+    ("pipe-missing-ls", ["ls", "-s", "{S}"], None, "stderr", 1, b"", []),
+    ("pipe-missing-rm", ["rm", "4", "-s", "{S}"], None, "stderr", 1, b"",
+     []),
+    ("pipe-bad-reply", ["ls", "-s", "{S}"], [reply(b"not json")], "stderr",
+     1, b"", [b"list\n"]),
+    ("pipe-clear-bad-reply", ["clear", "-s", "{S}"], [reply(b"{}")],
+     "stderr", 1, b"", [b"list\n"]),
+    # ... and a stream lago does not write to changes nothing.
+    ("pipe-ls-empty", ["ls", "-s", "{S}"], [reply(b"[]")], "stdout", 0, b"",
+     [b"list\n"]),
+    ("pipe-rm", ["rm", "4", "-s", "{S}"], [], "stdout", 0, b"",
+     [b"del:4\n"]),
+    ("pipe-clear", ["clear", "-s", "{S}"], [reply(THREE)], "stdout", 0, b"",
+     [b"list\n", b"del:3\n", b"del:1\n", b"del:2\n"]),
+    ("pipe-s-no-value-stdout", ["ls", "-s"], [], "stdout", 1, S_NO_VALUE,
+     []),
+    ("pipe-missing-stdout", ["ls", "-s", "{S}"], None, "stdout", 1,
+     no_conn_error(b"No such file or directory"), []),
+    ("pipe-version-stderr", ["-v"], [], "stderr", 0, VERSION, []),
+    ("pipe-ls-stderr", ["ls", "-s", "{S}"], [reply(FULL)], "stderr", 0,
+     FULL_ROW, [b"list\n"]),
+    # Any other failure to write stdout is reported, with status 1 ...
+    ("full-device-version", ["-v"], [], "stdout-full", 1, NO_SPACE, []),
+    ("full-device-help", ["-h"], [], "stdout-full", 1, NO_SPACE, []),
+    ("full-device-unknown-command", ["foo", "-s", "{S}"], [], "stdout-full",
+     1, NO_SPACE, []),
+    ("full-device-ls", ["ls", "-s", "{S}"], [reply(FULL)], "stdout-full", 1,
+     NO_SPACE, [b"list\n"]),
+    ("full-device-ls-empty", ["ls", "-s", "{S}"], [reply(b"[]")],
+     "stdout-full", 0, b"", [b"list\n"]),
+    # ... but a failure to write stderr has nowhere to go: the status of the
+    # failure lago was reporting stays.
+    ("full-device-s-no-value", ["ls", "-s"], [], "stderr-full", 1, b"", []),
+    ("full-device-missing", ["ls", "-s", "{S}"], None, "stderr-full", 1,
+     b"", []),
+    ("full-device-bad-reply", ["ls", "-s", "{S}"], [reply(b"not json")],
+     "stderr-full", 1, b"", [b"list\n"]),
+]
+
+
+def run_pipe_case(workdir, case):
+    name, argv, behaviors, stream, rc, other, requests = case
+    sock = os.path.join(workdir, name[:40] + ".sock")
+    argv = [a.replace("{S}", sock) for a in argv]
+    sub = sock.encode()
+    daemon = FakeDaemon(sock, behaviors) if behaviors is not None else None
+    target = stream.split("-")[0]
+    files = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    if stream.endswith("-full"):
+        files[target] = os.open("/dev/full", os.O_WRONLY)
+    elif stream in ("stdout", "stderr"):
+        read_end, write_end = os.pipe()
+        os.close(read_end)
+        files[target] = write_end
+    proc = subprocess.Popen(["lago"] + argv, executable=LAGO,
+                            stdin=subprocess.DEVNULL, cwd=workdir, **files)
+    for f in files.values():
+        if isinstance(f, int) and f >= 0:
+            os.close(f)
+    other_stream = proc.stderr if target == "stdout" else proc.stdout
+    if stream == "stdout-4k":
+        proc.stdout.read(4096)
+        proc.stdout.close()
+    problems = []
+    try:
+        got_other = other_stream.read()
+        proc.wait(10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        problems.append("timed out after 10 s")
+        got_other = b""
+    for f in (proc.stdout, proc.stderr):
+        if f is not None and not f.closed:
+            f.close()
+    got_requests = []
+    if daemon:
+        daemon.close()
+        got_requests = daemon.requests
+    if proc.returncode < 0:
+        problems.append(f"killed by {signal.Signals(-proc.returncode).name}, "
+                        f"expected exit status {rc}")
+    elif proc.returncode != rc:
+        problems.append(f"exit status {proc.returncode}, expected {rc}")
+    expected_other = other.replace(b"{S}", sub)
+    if got_other != expected_other:
+        problems.append(f"other stream {shorten(got_other)} != "
+                        f"{shorten(expected_other)}")
+    expected_requests = [r.replace(b"{S}", sub) for r in requests]
+    if got_requests != expected_requests:
+        problems.append(f"requests {got_requests!r} != {expected_requests!r}")
+    return problems
+
+
+# ---------------------------------------------------------------------------
 # Runner
 
 def run_case(workdir, case):
@@ -546,13 +675,15 @@ def main():
         print("usage: lago_regress.py <lago>", file=sys.stderr)
         return 2
     LAGO = os.path.abspath(sys.argv[1])
-    names = [case[0] for case in CASES]
+    names = [case[0] for case in CASES + PIPE_CASES]
     assert len(names) == len(set(names)), "duplicate case names"
     failures = 0
     workdir = tempfile.mkdtemp(prefix="lago-regress-")
+    runs = ([(run_case, case) for case in CASES]
+            + [(run_pipe_case, case) for case in PIPE_CASES])
     try:
-        for case in CASES:
-            problems = run_case(workdir, case)
+        for runner, case in runs:
+            problems = runner(workdir, case)
             if problems:
                 failures += 1
                 print(f"FAIL {case[0]}")
@@ -567,7 +698,7 @@ def main():
             except OSError:
                 pass
         os.rmdir(workdir)
-    print(f"{len(CASES) - failures}/{len(CASES)} cases passed")
+    print(f"{len(runs) - failures}/{len(runs)} cases passed")
     return 1 if failures else 0
 
 
