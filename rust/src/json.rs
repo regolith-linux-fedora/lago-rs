@@ -62,7 +62,7 @@ impl Node {
 /// values giving the "integer indefinite" value `i64::MIN`.
 fn double_to_int64(d: f64) -> i64 {
     const TWO_63: f64 = 9_223_372_036_854_775_808.0;
-    if d.is_nan() || d >= TWO_63 || d < -TWO_63 {
+    if d.is_nan() || !(-TWO_63..TWO_63).contains(&d) {
         i64::MIN
     } else {
         d.trunc() as i64
